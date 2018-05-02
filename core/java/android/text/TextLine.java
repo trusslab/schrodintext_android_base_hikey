@@ -56,6 +56,7 @@ class TextLine {
     private char[] mChars;
     private boolean mCharsValid;
     private Spanned mSpanned;
+    private boolean mEncryptedMode;
     private final TextPaint mWorkPaint = new TextPaint();
     private final SpanSet<MetricAffectingSpan> mMetricAffectingSpanSpanSet =
             new SpanSet<MetricAffectingSpan>(MetricAffectingSpan.class);
@@ -132,12 +133,13 @@ class TextLine {
      * @param tabStops the tabStops. Can be null.
      */
     void set(TextPaint paint, CharSequence text, int start, int limit, int dir,
-            Directions directions, boolean hasTabs, TabStops tabStops) {
+            Directions directions, boolean hasTabs, TabStops tabStops, boolean encryptedMode) {
         mPaint = paint;
         mText = text;
         mStart = start;
         mLen = limit - start;
         mDir = dir;
+		mEncryptedMode = encryptedMode;
         mDirections = directions;
         if (mDirections == null) {
             throw new IllegalArgumentException("Directions cannot be null");
@@ -146,39 +148,46 @@ class TextLine {
         mSpanned = null;
 
         boolean hasReplacement = false;
-        if (text instanceof Spanned) {
-            mSpanned = (Spanned) text;
-            mReplacementSpanSpanSet.init(mSpanned, start, limit);
-            hasReplacement = mReplacementSpanSpanSet.numberOfSpans > 0;
-        }
+		if (!mEncryptedMode) {
+		    if (text instanceof Spanned) {
+		        mSpanned = (Spanned) text;
+		        mReplacementSpanSpanSet.init(mSpanned, start, limit);
+		        hasReplacement = mReplacementSpanSpanSet.numberOfSpans > 0;
+		    }
 
-        mCharsValid = hasReplacement || hasTabs || directions != Layout.DIRS_ALL_LEFT_TO_RIGHT;
+		    mCharsValid = hasReplacement || hasTabs || directions != Layout.DIRS_ALL_LEFT_TO_RIGHT;
 
-        if (mCharsValid) {
-            if (mChars == null || mChars.length < mLen) {
-                mChars = ArrayUtils.newUnpaddedCharArray(mLen);
-            }
-            TextUtils.getChars(text, start, limit, mChars, 0);
-            if (hasReplacement) {
-                // Handle these all at once so we don't have to do it as we go.
-                // Replace the first character of each replacement run with the
-                // object-replacement character and the remainder with zero width
-                // non-break space aka BOM.  Cursor movement code skips these
-                // zero-width characters.
-                char[] chars = mChars;
-                for (int i = start, inext; i < limit; i = inext) {
-                    inext = mReplacementSpanSpanSet.getNextTransition(i, limit);
-                    if (mReplacementSpanSpanSet.hasSpansIntersecting(i, inext)) {
-                        // transition into a span
-                        chars[i - start] = '\ufffc';
-                        for (int j = i - start + 1, e = inext - start; j < e; ++j) {
-                            chars[j] = '\ufeff'; // used as ZWNBS, marks positions to skip
-                        }
-                    }
-                }
-            }
-        }
+		    if (mCharsValid) {
+		        if (mChars == null || mChars.length < mLen) {
+		            mChars = ArrayUtils.newUnpaddedCharArray(mLen);
+		        }
+		        TextUtils.getChars(text, start, limit, mChars, 0);
+		        if (hasReplacement) {
+		            // Handle these all at once so we don't have to do it as we go.
+		            // Replace the first character of each replacement run with the
+		            // object-replacement character and the remainder with zero width
+		            // non-break space aka BOM.  Cursor movement code skips these
+		            // zero-width characters.
+		            char[] chars = mChars;
+		            for (int i = start, inext; i < limit; i = inext) {
+		                inext = mReplacementSpanSpanSet.getNextTransition(i, limit);
+		                if (mReplacementSpanSpanSet.hasSpansIntersecting(i, inext)) {
+		                    // transition into a span
+		                    chars[i - start] = '\ufffc';
+		                    for (int j = i - start + 1, e = inext - start; j < e; ++j) {
+		                        chars[j] = '\ufeff'; // used as ZWNBS, marks positions to skip
+		                    }
+		                }
+		            }
+		        }
+		    }
+	}
         mTabs = tabStops;
+    }
+
+    void set(TextPaint paint, CharSequence text, int start, int limit, int dir,
+            Directions directions, boolean hasTabs, TabStops tabStops) {
+	set(paint, text, start, limit, dir, directions, hasTabs, tabStops, false);
     }
 
     /**

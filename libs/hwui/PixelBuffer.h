@@ -213,7 +213,35 @@ protected:
 
 }; // class PixelBuffer
 
+class SchrodPixelBuffer {
+public:
+    SchrodPixelBuffer(uint32_t size, unsigned int numBuffers,
+		     const void *cipher, unsigned int textLen, unsigned int cipherSize,
+		     int keyHandle);
+    ~SchrodPixelBuffer();
+
+    uint8_t *getBuffer(unsigned int i);
+    int resolve(uint8_t *dst_addr, unsigned int textPos, unsigned int px, unsigned int fb_bytespp, bool conditional_char, bool trust_addr, bool last_res);
+    int registerSchrobuf(int* charWidths, int charWidthsSize);
+
+private:
+    int openSchrobuf(void);
+    int closeSchrobuf(void);
+    int getKeyHandle();
+	int unregisterSchrobuf(void);
+    const void *mCipher;
+    unsigned int mTextLen; /* num characters */
+    unsigned int mCipherSize;
+    int mKeyHandle;
+    unsigned int mNumBuffers;
+    unsigned int mBufferSize;
+    uint8_t **mBuffers;
+    uint8_t *mBuffersMem;
+    int mFd;
+};
+
 }; // namespace uirenderer
 }; // namespace android
 
 #endif // ANDROID_HWUI_PIXEL_BUFFER_H
+

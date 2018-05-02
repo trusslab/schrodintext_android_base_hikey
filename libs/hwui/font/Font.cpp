@@ -30,6 +30,7 @@
 #include "../FontRenderer.h"
 #include "../PixelBuffer.h"
 #include "../Properties.h"
+#include <utils/Log.h>
 
 namespace android {
 namespace uirenderer {
@@ -173,6 +174,26 @@ void Font::drawCachedGlyph(CachedGlyphInfo* glyph, int x, int y,
             nPenX, nPenY - height, u1, v1, glyph->mCacheTexture);
 }
 
+void Font::drawCachedGlyphEncrypted(CachedGlyphInfo* glyph, int x, int y,
+        uint8_t* bitmap, uint32_t bitmapW, uint32_t bitmapH, Rect* bounds, const float* pos) {
+
+    float width = (float) glyph->mBitmapWidth;
+    float height = (float) glyph->mBitmapHeight;
+
+    float nPenX = x + glyph->mBitmapLeft;
+    float nPenY = y + glyph->mBitmapTop + height;
+
+    float u1 = glyph->mBitmapMinU;
+    float u2 = glyph->mBitmapMaxU;
+    float v1 = glyph->mBitmapMinV;
+    float v2 = glyph->mBitmapMaxV;
+
+    mState->appendMeshQuadEncrypted(nPenX, nPenY, u1, v2,
+            nPenX + width, nPenY, u2, v2,
+            nPenX + width, nPenY - height, u2, v1,
+            nPenX, nPenY - height, u1, v1, glyph);
+}
+
 void Font::drawCachedGlyphTransformed(CachedGlyphInfo* glyph, int x, int y,
         uint8_t* bitmap, uint32_t bitmapW, uint32_t bitmapH, Rect* bounds, const float* pos) {
     float width = (float) glyph->mBitmapWidth;
@@ -291,10 +312,37 @@ CachedGlyphInfo* Font::getCachedGlyph(const SkPaint* paint, glyph_t textUnit, bo
     return cachedGlyph;
 }
 
+CachedGlyphInfo* Font::getCachedGlyphEncrypted(const SkPaint* paint, const void *cipher,
+				unsigned int len, unsigned int numGlyphs, unsigned int textPos,
+				const uint32_t *glyphCodebook, unsigned int codebookSize,
+				unsigned int cipherSize, int keyHandle, int textStart, int textEnd,
+				int* charWidths, int charWidthsSize, bool precaching) {
+    CachedGlyphInfo* cachedGlyph;
+
+    if (textPos >= len) {
+        ALOGE("%s Error: invalid textPos (%d) in string of length (%d)\n", __func__, textPos, len);
+		return NULL;
+    }
+
+
+    cachedGlyph = cacheGlyphEncrypted(paint, cipher, len, numGlyphs, textPos, glyphCodebook,
+		    		   codebookSize, cipherSize, keyHandle, textStart, textEnd, charWidths, charWidthsSize, precaching);
+
+    return cachedGlyph;
+}
+
 void Font::render(const SkPaint* paint, const glyph_t* glyphs,
             int numGlyphs, int x, int y, const float* positions) {
     render(paint, glyphs, numGlyphs, x, y, FRAMEBUFFER, nullptr,
             0, 0, nullptr, positions);
+}
+
+void Font::renderEncrypted(const SkPaint* paint, const void *cipher, uint32_t start,
+	    uint32_t len, int numGlyphs, const uint32_t *glyphCodebook, unsigned int codebookSize,
+	    unsigned int cipherSize, int keyHandle, int x, int y, const float* positions, int textStart, int textEnd,
+		int* charWidths, int charWidthsSize) {
+    renderEncrypted(paint, cipher, start, len, numGlyphs, glyphCodebook, codebookSize,
+		    cipherSize, keyHandle, x, y, FRAMEBUFFER, NULL, 0, 0, NULL, positions, textStart, textEnd, charWidths, charWidthsSize);
 }
 
 void Font::render(const SkPaint* paint, const glyph_t* glyphs, int numGlyphs,
@@ -345,10 +393,15 @@ void Font::render(const SkPaint* paint, const glyph_t* glyphs, int numGlyphs,
     }
 }
 
+void Font::renderEncrypted(const SkPaint* paint, const char *text, uint32_t start, uint32_t len,
+        int numGlyphs, const SkPath* path, float hOffset, float vOffset) {
+    ALOGE("Error: Not Supported\n");
+}
+
 void Font::measure(const SkPaint* paint, const glyph_t* glyphs,
         int numGlyphs, Rect *bounds, const float* positions) {
     if (bounds == nullptr) {
-        ALOGE("No return rectangle provided to measure text");
+        ALOGE("%s No return rectangle provided to measure text", __func__);
         return;
     }
     bounds->set(1e6, -1e6, -1e6, 1e6);
@@ -423,6 +476,45 @@ void Font::render(const SkPaint* paint, const glyph_t* glyphs,
     }
 }
 
+void Font::renderEncrypted(const SkPaint* paint, const void* cipher, uint32_t start,
+	uint32_t len, int numGlyphs, const uint32_t *glyphCodebook, unsigned int codebookSize,
+	unsigned int cipherSize, int keyHandle, int x, int y, RenderMode mode, uint8_t *bitmap,
+    uint32_t bitmapW, uint32_t bitmapH, Rect* bounds, const float* positions, int textStart, int textEnd,
+	int* charWidths, int charWidthsSize) {
+    if (numGlyphs == 0 || cipher == NULL || len == 0) {
+		ALOGE("%s numGlyphs == 0 || cipher == NULL || len == 0 somehow occurred", __func__);
+        return;
+    }
+
+    static RenderGlyph gRenderGlyph[] = {
+            &android::uirenderer::Font::drawCachedGlyphEncrypted
+    };
+
+    RenderGlyph render = gRenderGlyph[0];
+
+    int glyphsCount = 0;
+
+    while (glyphsCount < numGlyphs) {
+		unsigned int textPos = (unsigned int) glyphsCount;
+        CachedGlyphInfo* cachedGlyph = getCachedGlyphEncrypted(paint, cipher,
+				(unsigned int) len, (unsigned int) numGlyphs, textPos, 
+				glyphCodebook, codebookSize, cipherSize, keyHandle, textStart, textEnd,
+				charWidths, charWidthsSize);
+
+        // If it's still not valid, we couldn't cache it, so we shouldn't
+        // draw garbage; also skip empty glyphs (spaces)
+        if (cachedGlyph->mIsValid && cachedGlyph->mCacheTexture) {
+            int penX = x + (int) roundf(positions[(glyphsCount << 1)]);
+            int penY = y + (int) roundf(positions[(glyphsCount << 1) + 1]);
+
+            (*this.*render)(cachedGlyph, penX, penY,
+                    bitmap, bitmapW, bitmapH, bounds, positions);
+        }
+		delete cachedGlyph;
+        glyphsCount++;
+    }
+}
+
 void Font::updateGlyphCache(const SkPaint* paint, const SkGlyph& skiaGlyph,
         SkGlyphCache* skiaGlyphCache, CachedGlyphInfo* glyph, bool precaching) {
     glyph->mAdvanceX = skiaGlyph.fAdvanceX;
@@ -467,6 +559,76 @@ void Font::updateGlyphCache(const SkPaint* paint, const SkGlyph& skiaGlyph,
     }
 }
 
+SkGlyph g_skiaGlyph;
+bool g_skiaGlyphSet = false;
+void Font::updateGlyphCacheEncrypted(const SkPaint* paint, CachedGlyphInfo* glyph, int textStart, int textEnd, int* charWidths, int charWidthsSize, bool precaching) {
+
+    glyph_t _glyph = glyph->mGlyphCodebook[5]; //We can use any glyph since we only support monospaced fonts
+
+    SkSurfaceProps surfaceProps(0, kUnknown_SkPixelGeometry);
+    SkAutoGlyphCacheNoGamma autoCache(*paint, &surfaceProps, &mDescription.mLookupTransform);
+    // some skiaGlyph needed for its size properties, not its actual glyph
+    const SkGlyph& _skiaGlyph = GET_METRICS(autoCache.getCache(), _glyph);
+    if (g_skiaGlyphSet) 
+    	goto skiaGlyphFound;
+
+    memcpy(&g_skiaGlyph, &_skiaGlyph, sizeof(SkGlyph));
+
+    g_skiaGlyph.fHeight = 0;
+    g_skiaGlyph.fWidth = 0;
+    unsigned int i;
+
+    for (i = 0; i < glyph->mCodebookSize; i++) {
+        _glyph = glyph->mGlyphCodebook[i];
+        const SkGlyph& _skiaGlyph = GET_METRICS(autoCache.getCache(), _glyph);
+        if (_skiaGlyph.fHeight > g_skiaGlyph.fHeight)
+	    g_skiaGlyph.fHeight = _skiaGlyph.fHeight;
+        if (_skiaGlyph.fWidth > g_skiaGlyph.fWidth)
+	    g_skiaGlyph.fWidth = _skiaGlyph.fWidth;
+    }
+    g_skiaGlyphSet = true;
+
+skiaGlyphFound:
+    glyph->mAdvanceX = g_skiaGlyph.fAdvanceX;
+    glyph->mAdvanceY = g_skiaGlyph.fAdvanceY;
+    glyph->mBitmapLeft = g_skiaGlyph.fLeft;
+    glyph->mBitmapTop = g_skiaGlyph.fTop;
+    glyph->mLsbDelta = g_skiaGlyph.fLsbDelta;
+    glyph->mRsbDelta = g_skiaGlyph.fRsbDelta;
+
+    uint32_t startX = 0;
+    uint32_t startY = 0;
+
+    mState->cacheBitmapEncrypted(g_skiaGlyph, glyph, &startX, &startY, precaching, &autoCache,
+				 paint->getColor(), textStart, textEnd, charWidths, charWidthsSize);
+
+    if (!glyph->mIsValid) {
+        return;
+    }
+
+    uint32_t endX = startX + g_skiaGlyph.fWidth;
+    uint32_t endY = startY + g_skiaGlyph.fHeight;
+
+    glyph->mStartX = startX;
+    glyph->mStartY = startY;
+    glyph->mBitmapWidth = g_skiaGlyph.fWidth;
+    glyph->mBitmapHeight = g_skiaGlyph.fHeight;
+
+    bool empty = g_skiaGlyph.fWidth == 0 || g_skiaGlyph.fHeight == 0;
+    if (!empty) {
+        uint32_t cacheWidth = glyph->mCacheTexture->getWidth();
+        uint32_t cacheHeight = glyph->mCacheTexture->getHeight();
+
+        glyph->mBitmapMinU = startX / (float) cacheWidth;
+        glyph->mBitmapMinV = startY / (float) cacheHeight;
+        glyph->mBitmapMaxU = endX / (float) cacheWidth;
+        glyph->mBitmapMaxV = endY / (float) cacheHeight;
+
+        mState->setTextureDirty();
+        mState->mEncryptedTexture = true;
+    }
+}
+
 CachedGlyphInfo* Font::cacheGlyph(const SkPaint* paint, glyph_t glyph, bool precaching) {
     CachedGlyphInfo* newGlyph = new CachedGlyphInfo();
     mCachedGlyphs.add(glyph, newGlyph);
@@ -478,6 +640,28 @@ CachedGlyphInfo* Font::cacheGlyph(const SkPaint* paint, glyph_t glyph, bool prec
     newGlyph->mGlyphIndex = skiaGlyph.fID;
 
     updateGlyphCache(paint, skiaGlyph, autoCache.getCache(), newGlyph, precaching);
+
+    return newGlyph;
+}
+
+CachedGlyphInfo* Font::cacheGlyphEncrypted(const SkPaint* paint, const void *cipher,
+				unsigned int len, unsigned int numGlyphs, unsigned int textPos,
+				const uint32_t *glyphCodebook, unsigned int codebookSize,
+				unsigned int cipherSize, int keyHandle, int textStart, int textEnd, 
+				int* charWidths, int charWidthsSize, bool precaching) {
+
+    CachedGlyphInfo* newGlyph = new CachedGlyphInfo();
+    newGlyph->mIsValid = false;
+    newGlyph->mEncryptedMode = true;
+    newGlyph->mCipher = cipher;
+    newGlyph->mEncryptedNumGlyphs = numGlyphs;
+    newGlyph->mEncryptedTextPos = textPos;
+    newGlyph->mGlyphCodebook = glyphCodebook;
+    newGlyph->mCodebookSize = codebookSize;
+    newGlyph->mCipherSize = cipherSize;
+    newGlyph->mKeyHandle = keyHandle;
+
+    updateGlyphCacheEncrypted(paint, newGlyph, textStart, textEnd, charWidths, charWidthsSize, precaching);
 
     return newGlyph;
 }
@@ -497,3 +681,4 @@ Font* Font::create(FontRenderer* state, const SkPaint* paint, const SkMatrix& ma
 
 }; // namespace uirenderer
 }; // namespace android
+

@@ -110,7 +110,8 @@ CacheBlock* CacheBlock::removeBlock(CacheBlock* head, CacheBlock* blockToRemove)
 ///////////////////////////////////////////////////////////////////////////////
 
 CacheTexture::CacheTexture(uint16_t width, uint16_t height, GLenum format, uint32_t maxQuadCount)
-        : mTexture(Caches::getInstance())
+        : mEncryptedTexture(false)
+        , mTexture(Caches::getInstance())
         , mWidth(width)
         , mHeight(height)
         , mFormat(format)
@@ -338,3 +339,4 @@ uint32_t CacheTexture::calculateFreeMemory() const {
 
 }; // namespace uirenderer
 }; // namespace android
+

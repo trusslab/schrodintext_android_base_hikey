@@ -38,6 +38,7 @@
 #include <SkXfermode.h>
 
 #include <private/hwui/DrawGlInfo.h>
+#include <utils/Log.h>
 
 // Use OP_LOG for logging with arglist, OP_LOGS if just printing char*
 #define OP_LOGS(s) OP_LOG("%s", (s))
@@ -112,7 +113,7 @@ class DrawOp : public DisplayListOp {
 friend class MergingDrawBatch;
 public:
     DrawOp(const SkPaint* paint)
-            : mPaint(paint), mQuickRejected(false) {}
+            : mIsEncryptedText(false), mPaint(paint), mQuickRejected(false) {}
 
     virtual void defer(DeferStateStruct& deferStruct, int saveCount, int level,
             bool useQuickReject) override {
@@ -187,6 +188,8 @@ public:
         // since higher levels of the view hierarchy can change scale out from underneath it.
         return std::max(mPaint->getStrokeWidth(), 1.0f) * 0.5f;
     }
+    
+    bool mIsEncryptedText;
 
 protected:
     // Helper method for determining op opaqueness. Assumes op fills its bounds in local
@@ -1310,19 +1313,46 @@ public:
     DrawTextOp(const glyph_t* text, int bytesCount, int count, float x, float y,
             const float* positions, const SkPaint* paint, float totalAdvance, const Rect& bounds)
             : DrawStrokableOp(bounds, paint), mText(text), mBytesCount(bytesCount), mCount(count),
-            mX(x), mY(y), mPositions(positions), mTotalAdvance(totalAdvance) {
+            mX(x), mY(y), mPositions(positions), mTotalAdvance(totalAdvance),
+            mEncryptedMode(false), mCipher(NULL), mGlyphCodebook(NULL),
+            mCodebookSize(0), mCipherSize(0), mKeyHandle(0) {
+
         mPrecacheTransform = SkMatrix::InvalidMatrix();
     }
 
+    DrawTextOp(const void* cipher, int bytesCount, int count, const uint32_t* glyphCodebook,
+	    		unsigned int codebookSize, unsigned int cipherSize, int keyHandle, float x, float y,
+            	const float* positions, const SkPaint* paint, float totalAdvance, const Rect& bounds,
+	    		bool encryptedMode, int textStart, int textEnd, int* char_widths, int char_widths_size)
+            	: DrawStrokableOp(bounds, paint), mText(NULL), mBytesCount(bytesCount), mCount(count),
+            	mX(x), mY(y), mPositions(positions), mTotalAdvance(totalAdvance),
+            	mEncryptedMode(encryptedMode), mGlyphCodebook(glyphCodebook),
+            	mCodebookSize(codebookSize), mCipherSize(cipherSize), mKeyHandle(keyHandle), 
+				mTextStart(textStart), mTextEnd(textEnd), mCharWidths(char_widths), mCharWidthsSize(char_widths_size)	{
+            	
+        	mPrecacheTransform = SkMatrix::InvalidMatrix();
+
+        	void *_cipher;
+        	_cipher = malloc(cipherSize);
+        	memcpy(_cipher, cipher, cipherSize);
+			mCipher = _cipher;
+
+			if (mEncryptedMode)
+	    		mIsEncryptedText = true;
+    		}
+
     virtual void onDefer(OpenGLRenderer& renderer, DeferInfo& deferInfo,
             const DeferredDisplayState& state) override {
+            
         FontRenderer& fontRenderer = renderer.getCaches().fontRenderer.getFontRenderer();
         SkMatrix transform;
         renderer.findBestFontTransform(state.mMatrix, &transform);
+
         if (mPrecacheTransform != transform) {
             fontRenderer.precache(mPaint, mText, mCount, transform);
             mPrecacheTransform = transform;
         }
+
         deferInfo.batchId = mPaint->getColor() == SK_ColorBLACK ?
                 DeferredDisplayList::kOpBatch_Text :
                 DeferredDisplayList::kOpBatch_ColorText;
@@ -1333,32 +1363,76 @@ public:
         bool hasDecorations = mPaint->getFlags()
                 & (SkPaint::kUnderlineText_Flag | SkPaint::kStrikeThruText_Flag);
 
-        deferInfo.mergeable = state.mMatrix.isPureTranslate()
-                && !hasDecorations
-                && PaintUtils::getXfermodeDirect(mPaint) == SkXfermode::kSrcOver_Mode;
-    }
+		if (mEncryptedMode) {
+			deferInfo.mergeable = state.mMatrix.isPureTranslate() && !hasDecorations && PaintUtils::getXfermodeDirect(mPaint) == SkXfermode::kSrcOver_Mode;
+		}
+		else {
+		        deferInfo.mergeable = state.mMatrix.isPureTranslate()
+		                				&& !hasDecorations
+		                				&& PaintUtils::getXfermodeDirect(mPaint) == SkXfermode::kSrcOver_Mode;
+		}
+	}
 
     virtual void applyDraw(OpenGLRenderer& renderer, Rect& dirty) override {
         Rect bounds;
         getLocalBounds(bounds);
-        renderer.drawText(mText, mBytesCount, mCount, mX, mY,
-                mPositions, mPaint, mTotalAdvance, bounds);
-    }
+        if (mEncryptedMode) {
+            renderer.drawEncryptedText(mCipher, mBytesCount, mCount,
+		    mGlyphCodebook, mCodebookSize, mCipherSize, mKeyHandle, mX, mY,
+                    mPositions, mPaint, mTotalAdvance, bounds, mTextStart, 
+					mTextEnd, mCharWidths, mCharWidthsSize);
+	    	free((void *) mCipher);
+	    	return;
+		}
+		    renderer.drawText(mText, mBytesCount, mCount, mX, mY,
+		            mPositions, mPaint, mTotalAdvance, bounds);
+		}
 
     virtual void multiDraw(OpenGLRenderer& renderer, Rect& dirty,
             const std::vector<OpStatePair>& ops, const Rect& bounds) override {
+
+		bool hasEncrypted = false;
+
         for (unsigned int i = 0; i < ops.size(); i++) {
             const DeferredDisplayState& state = *(ops[i].state);
             DrawOpMode drawOpMode = (i == ops.size() - 1) ? DrawOpMode::kFlush : DrawOpMode::kDefer;
             renderer.restoreDisplayState(state, true); // restore all but the clip
 
             DrawTextOp& op = *((DrawTextOp*)ops[i].op);
+            if (op.mEncryptedMode) {
+				hasEncrypted = true;
+				/* We will draw the encrypted items last */
+				continue;
+	    	}
             // quickReject() will not occure in drawText() so we can use mLocalBounds
             // directly, we do not need to account for shadow by calling getLocalBounds()
             renderer.drawText(op.mText, op.mBytesCount, op.mCount, op.mX, op.mY,
                     op.mPositions, op.mPaint, op.mTotalAdvance, op.mLocalBounds,
                     drawOpMode);
         }
+
+		if (!hasEncrypted)
+			return;
+
+		/* Now, we draw the encrypted items. */
+		for (unsigned int i = 0; i < ops.size(); i++) {
+		        const DeferredDisplayState& state = *(ops[i].state);
+		        DrawOpMode drawOpMode = (i == ops.size() - 1) ? DrawOpMode::kFlush : DrawOpMode::kDefer;
+		        renderer.restoreDisplayState(state, true); // restore all but the clip
+
+		        DrawTextOp& op = *((DrawTextOp*)ops[i].op);
+		        if (!op.mEncryptedMode) {
+					continue;
+				}
+		        // quickReject() will not occure in drawText() so we can use mLocalBounds
+		        // directly, we do not need to account for shadow by calling getLocalBounds()
+				renderer.drawEncryptedText(op.mCipher, op.mBytesCount, op.mCount,
+											op.mGlyphCodebook, op.mCodebookSize, op.mCipherSize, mKeyHandle, op.mX, op.mY,
+		                					op.mPositions, op.mPaint, op.mTotalAdvance, op.mLocalBounds, op.mTextStart, op.mTextEnd, 
+		                					mCharWidths, mCharWidthsSize, drawOpMode);
+		    }
+
+		free((void *) mCipher);
     }
 
     virtual void output(int level, uint32_t logFlags) const override {
@@ -1376,6 +1450,16 @@ private:
     const float* mPositions;
     float mTotalAdvance;
     SkMatrix mPrecacheTransform;
+    bool mEncryptedMode;
+    const void *mCipher;
+    const uint32_t *mGlyphCodebook;
+    unsigned int mCodebookSize;
+    unsigned int mCipherSize;
+    int mKeyHandle;
+    int mTextStart;
+    int mTextEnd;
+	int* mCharWidths;
+	int mCharWidthsSize;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1553,3 +1637,4 @@ private:
 }; // namespace android
 
 #endif // ANDROID_HWUI_DISPLAY_OPERATION_H
+

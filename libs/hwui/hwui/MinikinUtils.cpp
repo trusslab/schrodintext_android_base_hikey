@@ -18,7 +18,7 @@
 #include "Paint.h"
 #include "SkPathMeasure.h"
 #include "Typeface.h"
-
+#include <utils/Log.h>
 #include <cutils/log.h>
 #include <string>
 
@@ -59,6 +59,17 @@ void MinikinUtils::doLayout(Layout* layout, const Paint* paint, int bidiFlags,
     layout->setFontCollection(font);
     layout->doLayout(buf, start, count, bufSize, bidiFlags, minikinStyle, minikinPaint);
 }
+
+void MinikinUtils::doEncryptedLayout(Layout* layout, const Paint* paint, int bidiFlags, Typeface* typeface,
+        							 const void* buf, size_t start, size_t count, size_t bufSize) {
+    FontCollection *font;
+    MinikinPaint minikinPaint;
+    FontStyle minikinStyle = prepareMinikinPaint(&minikinPaint, &font, paint, typeface);
+    layout->setFontCollection(font);
+
+    layout->doEncryptedLayout(buf, start, count, bufSize, bidiFlags, minikinStyle, minikinPaint);
+}
+
 
 float MinikinUtils::measureText(const Paint* paint, int bidiFlags, Typeface* typeface,
         const uint16_t* buf, size_t start, size_t count, size_t bufSize, float *advances) {
@@ -105,3 +116,4 @@ float MinikinUtils::hOffsetForTextAlign(Paint* paint, const Layout& layout, cons
 }
 
 }
+

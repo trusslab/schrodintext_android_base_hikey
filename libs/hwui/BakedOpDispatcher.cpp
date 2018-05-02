@@ -31,6 +31,7 @@
 #include <math.h>
 #include <SkPaintDefaults.h>
 #include <SkPathOps.h>
+#include <utils/Log.h>
 
 namespace android {
 namespace uirenderer {

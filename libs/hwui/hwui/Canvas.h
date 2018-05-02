@@ -229,6 +229,12 @@ public:
     void drawText(const uint16_t* text, int start, int count, int contextCount,
             float x, float y, int bidiFlags, const Paint& origPaint, Typeface* typeface);
 
+    void drawEncryptedText(const uint16_t* cipher, int start, int count, int contextCount,
+             unsigned int cipherSize, int keyHandle, float x, float y, int bidiFlags, const Paint& origPaint,
+	     Typeface* typeface, int textStart, int textEnd, int* char_widths, int char_widths_size);
+	     
+	static void removeEncryptedText();
+
     void drawTextOnPath(const uint16_t* text, int count, int bidiFlags, const SkPath& path,
             float hOffset, float vOffset, const Paint& paint, Typeface* typeface);
 
@@ -247,10 +253,24 @@ protected:
     virtual void drawGlyphsOnPath(const uint16_t* glyphs, int count, const SkPath& path,
             float hOffset, float vOffset, const SkPaint& paint) = 0;
 
+    enum class DrawOpMode {
+        kImmediate,
+        kDefer,
+        kFlush
+    };
+
+    virtual void drawGlyphsEncrypted(const void* cipher, int bytesCount,
+	    int count, const uint32_t* glyphCodebook, unsigned int codebookSize, unsigned int cipherSize,
+	    int keyHandle, float x, float y, const float* positions, const SkPaint* paint,
+	    float totalAdvance, float boundsLeft, float boundsTop, float boundsRight, float boundsBottom,
+        int textStart, int textEnd, int* char_widths, int char_widths_size, DrawOpMode drawOpMode = DrawOpMode::kImmediate) = 0;
+
     friend class DrawTextFunctor;
+    friend class DrawTextFunctorEncrypted;
     friend class DrawTextOnPathFunctor;
     friend class uirenderer::SkiaCanvasProxy;
 };
 
 }; // namespace android
 #endif // ANDROID_GRAPHICS_CANVAS_H
+

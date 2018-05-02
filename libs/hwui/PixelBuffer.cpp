@@ -167,5 +167,173 @@ PixelBuffer* PixelBuffer::create(GLenum format,
     return new CpuPixelBuffer(format, width, height);
 }
 
+#include <stdio.h>
+#include <errno.h>
+
+int SchrodPixelBuffer::openSchrobuf(void) {
+	if (mFd >= 0) {
+		ALOGD("%s device file is already open (mFd = %d)\n", __func__, mFd);
+		return 0;
+	}
+
+	mFd = open("/dev/schrobuf", O_RDWR | O_NONBLOCK);
+	if (mFd < 0) {
+		ALOGD("%s Can't open device file: %d errno=%s\n", __func__, mFd, strerror(errno));
+		return -1;
+	}
+	
+	return 0;
+}
+
+int SchrodPixelBuffer::closeSchrobuf(void) {
+	if (mFd < 0) {
+		ALOGD("%s device file is not open (mFd = %d)\n", __func__, mFd);
+		return 0;
+	}
+
+	close(mFd);
+	mFd = -1;	
+	
+	return 0;
+}
+
+#define SCHROBUF_REGISTER	5
+#define SCHROBUF_UNREGISTER	6
+#define SCHROBUF_RESOLVE	7
+
+struct schrobuf_register_ioctl {
+    unsigned long buffers_mem;	// addr to glyphbook
+    unsigned int num_buffers;	// glyphbook size
+    unsigned int buffer_size;	// size of each glyph in glyphbook
+    unsigned long encrypted_text;
+    unsigned int text_len;
+    unsigned int text_buf_size;
+	unsigned long char_widths; 	// addr to array describing pixel width of each char
+	unsigned int char_widths_size; // size of char_widths
+};
+
+struct schrobuf_resolve_ioctl {
+    unsigned long dst_addr;
+    unsigned int text_pos;
+	unsigned int px;			// pixel coordinate on x-axis
+	unsigned int fb_bytespp;
+    bool conditional_char;
+	bool trust_addr;			// tell Xen to composite text at dst_addr, do not perform adjustment (set true for monospaced fonts, false otherwise)
+	bool last_res;
+};
+
+int SchrodPixelBuffer::registerSchrobuf(int* charWidths, int charWidthsSize) {
+    int ret;	
+    struct schrobuf_register_ioctl data;
+    
+    if (mFd < 0) {
+        ALOGD("%s device file is not open (mFd = %d)\n", __func__, mFd);
+        return 0;
+    }
+
+    data.buffers_mem = (unsigned long) mBuffersMem;
+    data.num_buffers = mNumBuffers;
+    data.buffer_size = mBufferSize;
+    data.encrypted_text = (unsigned long) mCipher;
+    data.text_len = mTextLen;
+    data.text_buf_size = mCipherSize;
+	data.char_widths = charWidths ? (unsigned long) charWidths : 0;
+	data.char_widths_size = charWidthsSize;
+    
+    ret = ioctl(mFd, SCHROBUF_REGISTER, &data);
+    
+    return ret;
+}
+
+int SchrodPixelBuffer::unregisterSchrobuf(void) {
+    int ret;	
+    
+    if (mFd < 0) {
+        ALOGD("%s device file is not open (mFd = %d)\n", __func__, mFd);
+        return 0;
+    }
+    
+    ret = ioctl(mFd, SCHROBUF_UNREGISTER, NULL);
+    
+    return ret;
+}
+
+int hide_counter = 0;
+
+int SchrodPixelBuffer::resolve(uint8_t *dst_addr, unsigned int textPos, unsigned int px, unsigned int fb_bytespp, bool conditional_char, bool trust_addr, bool last_res) {
+    int ret;	
+    struct schrobuf_resolve_ioctl data;
+    
+    if (mFd < 0) {
+        ALOGD("%s device file is not open (mFd = %d)\n", __func__, mFd);
+        return 0;
+    }
+    
+    data.dst_addr = (unsigned long) dst_addr;
+    data.text_pos = textPos;
+	data.px = px;
+	data.fb_bytespp = fb_bytespp;
+    data.conditional_char = conditional_char;
+	data.trust_addr = trust_addr;
+	data.last_res = last_res;
+    
+    ret = ioctl(mFd, SCHROBUF_RESOLVE, &data);
+    
+    hide_counter++;
+    return ret;
+}
+
+SchrodPixelBuffer::SchrodPixelBuffer(uint32_t size, unsigned int numBuffers,
+				   const void *cipher, unsigned int textLen,
+				   unsigned int cipherSize, int keyHandle) :
+				   mCipher(cipher), mTextLen(textLen),
+				   mCipherSize(cipherSize), mKeyHandle(keyHandle),
+				   mNumBuffers(numBuffers), mBufferSize(size), mFd(-1) {
+    unsigned int i;
+
+    mBuffersMem = new uint8_t[numBuffers * mBufferSize];
+    memset(mBuffersMem, 0x0, numBuffers * mBufferSize);
+    mBuffers = new uint8_t *[numBuffers];
+    
+    for (i = 0; i < mNumBuffers; i++) {
+        mBuffers[i] = &mBuffersMem[i * mBufferSize];
+    }
+
+    if (mFd < 0) {
+        openSchrobuf();
+    }
+
+    if (mFd < 0) {
+       ALOGE("%s Error: could not open schrobuf dev file\n", __func__);
+       return;
+    }
+}
+
+SchrodPixelBuffer::~SchrodPixelBuffer() {
+    delete[] mBuffers;
+    delete[] mBuffersMem;
+
+    unregisterSchrobuf();
+    closeSchrobuf();
+}
+
+uint8_t *SchrodPixelBuffer::getBuffer(unsigned int i) {
+
+    if (i >= mNumBuffers) {
+        ALOGE("%s Error: invalid index %d (mNumBuffers = %d)\n", __func__, i, mNumBuffers);
+        return NULL;
+    }
+
+    return mBuffers[i];
+}
+
+int counter = 0;
+
+int SchrodPixelBuffer::getKeyHandle() {
+    return mKeyHandle;
+}
+
+
 }; // namespace uirenderer
 }; // namespace android
+

@@ -196,6 +196,10 @@ public:
     void drawText(const glyph_t* glyphs, int bytesCount, int count, float x, float y,
             const float* positions, const SkPaint* paint, float totalAdvance, const Rect& bounds,
             DrawOpMode drawOpMode = DrawOpMode::kImmediate);
+    void drawEncryptedText(const void* cipher, int bytesCount, int count,
+	    const uint32_t* glyphCodebook, unsigned int codebookSize, unsigned int cipherSize,
+	    int keyHandle, float x, float y, const float* positions, const SkPaint* paint,
+	    float totalAdvance, const Rect& bounds, int textStart, int textEnd, int* charWidths, int charWidthsSize, DrawOpMode drawOpMode = DrawOpMode::kImmediate);
     void drawRects(const float* rects, int count, const SkPaint* paint);
 
     void drawShadow(float casterAlpha,
@@ -452,6 +456,7 @@ protected:
     virtual bool suppressErrorChecks() const {
         return false;
     }
+    bool isEncrypted() { return mEncryptedRenderer; }
 
     CanvasState mState;
     Caches& mCaches;
@@ -762,6 +767,10 @@ private:
     // Paths kept alive for the duration of the frame
     std::vector<std::unique_ptr<SkPath>> mTempPaths;
 
+    bool mEncryptedRenderer;
+    bool mPrintStat;
+    void updateHiddenContent(void);
+
     /**
      * Initial transform for a rendering pass; transform from global device
      * coordinates to the current RenderNode's drawing content coordinates,
@@ -783,3 +792,4 @@ private:
 }; // namespace android
 
 #endif // ANDROID_HWUI_OPENGL_RENDERER_H
+

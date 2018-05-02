@@ -31,6 +31,21 @@
 #include "SkiaShader.h"
 #include "Vector.h"
 #include "VertexBuffer.h"
+#include <linux/fb.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+
+#include <binder/ProcessState.h>
+
+#include <gui/SurfaceComposerClient.h>
+#include <gui/ISurfaceComposer.h>
+#include <ui/PixelFormat.h>
+
+#include <SkImageEncoder.h>
+#include <SkBitmap.h>
+#include <SkData.h>
+#include <SkStream.h>
+#include <utils/Log.h>
 #include "hwui/Canvas.h"
 #include "utils/GLUtils.h"
 #include "utils/PaintUtils.h"
@@ -76,7 +91,7 @@ OpenGLRenderer::OpenGLRenderer(RenderState& renderState)
         , mLightCenter((Vector3){FLT_MIN, FLT_MIN, FLT_MIN})
         , mLightRadius(FLT_MIN)
         , mAmbientShadowAlpha(0)
-        , mSpotShadowAlpha(0) {
+        , mSpotShadowAlpha(0), mEncryptedRenderer(false), mPrintStat(false) {
 }
 
 OpenGLRenderer::~OpenGLRenderer() {
@@ -142,7 +157,6 @@ void OpenGLRenderer::startFrame() {
 
 void OpenGLRenderer::prepareDirty(int viewportWidth, int viewportHeight,
         float left, float top, float right, float bottom, bool opaque) {
-
     setupFrameState(viewportWidth, viewportHeight, left, top, right, bottom, opaque);
 
     // Layer renderers will start the frame immediately
@@ -183,6 +197,153 @@ void OpenGLRenderer::clear(float left, float top, float right, float bottom, boo
     mRenderState.scissor().reset();
 }
 
+/* This update code is developed with help from frameworks/base/cmds/screencap/screencap.cpp */
+static status_t vinfoToPixelFormat(const fb_var_screeninfo& vinfo,
+        uint32_t* bytespp, uint32_t* f)
+{
+    switch (vinfo.bits_per_pixel) {
+        case 16:
+            *f = PIXEL_FORMAT_RGB_565;
+            *bytespp = 2;
+            break;
+        case 24:
+            *f = PIXEL_FORMAT_RGB_888;
+            *bytespp = 3;
+            break;
+        case 32:
+            // TODO: do better decoding of vinfo here
+            *f = PIXEL_FORMAT_RGBX_8888;
+            *bytespp = 4;
+            break;
+        default:
+            return BAD_VALUE;
+    }
+    return NO_ERROR;
+}
+
+static SkColorType flinger2skia(PixelFormat f)
+{
+    switch (f) {
+        case PIXEL_FORMAT_RGB_565:
+            return kRGB_565_SkColorType;
+        default:
+            return kN32_SkColorType;
+    }
+}
+
+
+static uint32_t DEFAULT_DISPLAY_ID = ISurfaceComposer::eDisplayIdMain;
+const SkPaint* gpaint = NULL;
+
+/* Uncomment print_time_ms() and its call in OpenGLRenderer::updateHiddenContent() to measure latency */
+
+void print_time_ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    int64_t time = (int64_t) tv.tv_sec * 1000 + tv.tv_usec / 1000;
+    ALOGD("%s SchrodinText Wall Clock Time (ms) = %llu\n", __func__, (unsigned long long) time);
+
+    FILE * fp;
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+
+    fp = fopen("/proc/stat", "r");
+    if (fp == NULL) {
+	ALOGE("Error: could not open stat file\n");
+	return;
+    }
+
+    if ((read = getline(&line, &len, fp)) != -1) {
+        ALOGD("CPU stat = %s\n", line);
+    } else {
+	ALOGE("Error: could not read line\n");
+    }
+
+    fclose(fp);
+    if (line)
+        free(line);
+}
+
+void OpenGLRenderer::updateHiddenContent(void) {
+    int32_t displayId = DEFAULT_DISPLAY_ID;
+    void const* mapbase = MAP_FAILED;
+    ssize_t mapsize = -1;
+
+    void* base = 0;
+    uint32_t w, s, h, f, bytespp;
+    size_t size = 0;
+    FontRenderer& fontRenderer = mCaches.fontRenderer.getFontRenderer();
+
+    ScreenshotClient screenshot;
+    sp<IBinder> display = SurfaceComposerClient::getBuiltInDisplay(displayId);
+    if (display != NULL && screenshot.update(display, android::Rect(), false) == NO_ERROR) {
+        ALOGE("%s Not supported\n", __func__);
+        w = screenshot.getWidth();
+        h = screenshot.getHeight();
+        s = screenshot.getStride();
+        f = screenshot.getFormat();
+        size = screenshot.getSize();
+    } else {
+        const char* fbpath = "/dev/graphics/fb0";
+        int fb = open(fbpath, O_RDONLY);
+        if (fb >= 0) {
+            struct fb_var_screeninfo vinfo;
+            if (ioctl(fb, FBIOGET_VSCREENINFO, &vinfo) == 0) {
+                if (vinfoToPixelFormat(vinfo, &bytespp, &f) == NO_ERROR) {
+                    size_t offset = (vinfo.xoffset + vinfo.yoffset*vinfo.xres) * bytespp;
+                    w = vinfo.xres;
+                    h = vinfo.yres;
+                    s = vinfo.xres;
+                    size = w*h*bytespp;
+                    mapsize = offset + size;
+                    mapbase = mmap(NULL, mapsize, PROT_READ, MAP_SHARED, fb, 0);
+                    if (mapbase != MAP_FAILED) {
+						base = (void * )((char *) mapbase + offset);
+                    }
+                }
+            }
+            close(fb);
+        }
+    }
+
+    // Update
+	if (base) {
+		// Draw on clear white test page
+		void *base2 = malloc(mapsize);
+		memset(base2, 0xFF, mapsize);
+		base = base2;
+		
+		//print_time_ms();
+        fontRenderer.commitHiddenContent(base, w, bytespp);
+		//print_time_ms(); 	// Uncomment this line and print_time_ms() function above to measure latency
+		// Take screenshot
+        int fd = -1;
+        fd = open("/data/local/tmp/autoscreen.png", O_WRONLY);
+        if (fd == -1) {
+            ALOGE("%s Error opening file\n", __func__);
+            goto wrapup;
+        }
+        const SkImageInfo info = SkImageInfo::Make(w, h, flinger2skia(f),
+                                                       kPremul_SkAlphaType);
+        SkBitmap b;
+        b.installPixels(info, const_cast<void*>(base), s*bytesPerPixel(f));
+        SkDynamicMemoryWStream stream;
+        SkImageEncoder::EncodeStream(&stream, b,
+                SkImageEncoder::kPNG_Type,
+                SkImageEncoder::kDefaultQuality);
+        SkData* streamData = stream.copyToData();
+        write(fd, streamData->data(), streamData->size());
+        streamData->unref();
+
+    }
+wrapup:
+    if (mapbase != MAP_FAILED) {
+       munmap((void *)mapbase, mapsize);
+    }
+}
+
 bool OpenGLRenderer::finish() {
     renderOverdraw();
     mTempPaths.clear();
@@ -207,7 +368,10 @@ bool OpenGLRenderer::finish() {
 #endif
     }
 
-    mFrameStarted = false;
+    mFrameStarted = false;	
+    if (mEncryptedRenderer) {
+        updateHiddenContent();
+    }
 
     return reportAndClearDirty();
 }
@@ -327,6 +491,9 @@ void OpenGLRenderer::renderOverdraw() {
 ///////////////////////////////////////////////////////////////////////////////
 // Layers
 ///////////////////////////////////////////////////////////////////////////////
+
+
+Layer* glayer = NULL;
 
 bool OpenGLRenderer::updateLayer(Layer* layer, bool inFrame) {
     if (layer->deferredUpdateScheduled && layer->renderer
@@ -2181,6 +2348,83 @@ void OpenGLRenderer::drawText(const glyph_t* glyphs, int bytesCount, int count, 
     mDirty = true;
 }
 
+void OpenGLRenderer::drawEncryptedText(const void* cipher, int bytesCount, int count,
+	const uint32_t* glyphCodebook, unsigned int codebookSize, unsigned int cipherSize,
+	int keyHandle, float x, float y, const float* positions, const SkPaint* paint,
+	float totalAdvance, const Rect& bounds, int textStart, int textEnd, int* charWidths, 
+	int charWidthsSize, DrawOpMode drawOpMode) {
+
+    mEncryptedRenderer = true;
+
+    const mat4& transform = *currentTransform();
+    const bool pureTranslate = transform.isPureTranslate();
+
+    if (CC_LIKELY(pureTranslate)) {
+        x = (int) floorf(x + transform.getTranslateX() + 0.5f);
+        y = (int) floorf(y + transform.getTranslateY() + 0.5f);
+    }
+
+    int alpha = PaintUtils::getAlphaDirect(paint) * currentSnapshot()->alpha;
+
+    SkXfermode::Mode mode = PaintUtils::getXfermodeDirect(paint);
+
+    FontRenderer& fontRenderer = mCaches.fontRenderer.getFontRenderer();
+    gpaint = paint;
+
+    const bool hasActiveLayer = hasLayer();
+
+    // We only pass a partial transform to the font renderer. That partial
+    // matrix defines how glyphs are rasterized. Typically we want glyphs
+    // to be rasterized at their final size on screen, which means the partial
+    // matrix needs to take the scale factor into account.
+    // When a partial matrix is used to transform glyphs during rasterization,
+    // the mesh is generated with the inverse transform (in the case of scale,
+    // the mesh is generated at 1.0 / scale for instance.) This allows us to
+    // apply the full transform matrix at draw time in the vertex shader.
+    // Applying the full matrix in the shader is the easiest way to handle
+    // rotation and perspective and allows us to always generated quads in the
+    // font renderer which greatly simplifies the code, clipping in particular.
+    SkMatrix fontTransform;
+    bool linearFilter = findBestFontTransform(transform, &fontTransform)
+            || fabs(y - (int) y) > 0.0f
+            || fabs(x - (int) x) > 0.0f;
+    fontRenderer.setFont(paint, fontTransform);
+    fontRenderer.setTextureFiltering(linearFilter);
+
+    // TODO: Implement better clipping for scaled/rotated text
+    const Rect* clip = !pureTranslate ? nullptr : &mState.currentRenderTargetClip();
+    Rect layerBounds(FLT_MAX / 2.0f, FLT_MAX / 2.0f, FLT_MIN / 2.0f, FLT_MIN / 2.0f);
+
+    bool status = false;
+#if HWUI_NEW_OPS
+    LOG_ALWAYS_FATAL("unsupported");
+    TextDrawFunctor functor(nullptr, nullptr, nullptr, x, y, pureTranslate, alpha, mode, paint);
+#else
+    TextDrawFunctor functor(this, x, y, pureTranslate, alpha, mode, paint);
+#endif
+
+    // don't call issuedrawcommand, do it at end of batch
+    bool forceFinish = (drawOpMode != DrawOpMode::kDefer);
+    if (CC_UNLIKELY(paint->getTextAlign() != SkPaint::kLeft_Align)) {
+        ALOGE("%s Not supported\n", __func__);
+    } else {
+        status = fontRenderer.renderPosEncryptedText(paint, clip, cipher, 0, bytesCount,
+													count, glyphCodebook, codebookSize, cipherSize, keyHandle, x, y,
+                									positions, hasActiveLayer ? &layerBounds : NULL, &functor, textStart, 
+													textEnd, charWidths, charWidthsSize, forceFinish);
+    
+    }
+
+    if ((status || drawOpMode != DrawOpMode::kImmediate) && hasActiveLayer) {
+        if (!pureTranslate) {
+            transform.mapRect(layerBounds);
+        }
+        dirtyLayerUnchecked(layerBounds, getRegion());
+    }
+
+    mDirty = true; 
+}
+
 void OpenGLRenderer::drawTextOnPath(const glyph_t* glyphs, int bytesCount, int count,
         const SkPath* path, float hOffset, float vOffset, const SkPaint* paint) {
     if (glyphs == nullptr || count == 0 || mState.currentlyIgnored() || canSkipText(paint)) {
@@ -2449,3 +2693,4 @@ float OpenGLRenderer::getLayerAlpha(const Layer* layer) const {
 
 }; // namespace uirenderer
 }; // namespace android
+

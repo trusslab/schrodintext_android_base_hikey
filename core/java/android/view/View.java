@@ -3208,6 +3208,9 @@ public class View implements Drawable.Callback, KeyEvent.Callback,
      */
     public static final int SCROLL_AXIS_VERTICAL = 1 << 1;
 
+    /** @hide */
+    public boolean mEncryptedView = false;
+
     /**
      * Controls the over-scroll mode for this view.
      * See {@link #overScrollBy(int, int, int, int, int, int, int, int, boolean)},

@@ -33,6 +33,7 @@ import android.os.Build;
 import android.util.AttributeSet;
 import android.util.Pools.SynchronizedPool;
 import android.util.SparseArray;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewDebug;
@@ -184,6 +185,9 @@ public class RelativeLayout extends ViewGroup {
      * parent's end edge.
      */
     public static final int ALIGN_PARENT_END         = 21;
+
+    private boolean mEncryptedLayout = false;
+
 
     private static final int VERB_COUNT              = 22;
 
@@ -464,6 +468,11 @@ public class RelativeLayout extends ViewGroup {
                     offsetHorizontalAxis = true;
                 }
             }
+
+			if (child.mEncryptedView) {
+				mEncryptedLayout = true;
+			}
+
         }
 
         views = mSortedVerticalChildren;
@@ -515,6 +524,11 @@ public class RelativeLayout extends ViewGroup {
                     bottom = Math.max(bottom, params.mBottom + params.bottomMargin);
                 }
             }
+
+			if (child.mEncryptedView) {
+				mEncryptedLayout = true;
+			}
+
         }
 
         // Use the top-start-most laid out view as the baseline. RTL offsets are
@@ -531,6 +545,10 @@ public class RelativeLayout extends ViewGroup {
                     baselineParams = childParams;
                 }
             }
+
+			if (child.mEncryptedView) {
+				mEncryptedLayout = true;
+			}
         }
         mBaselineView = baselineView;
 
@@ -560,6 +578,10 @@ public class RelativeLayout extends ViewGroup {
                             params.mRight = params.mLeft + childWidth;
                         }
                     }
+
+					if (child.mEncryptedView) {
+						mEncryptedLayout = true;
+					}
                 }
             }
         }
@@ -590,6 +612,10 @@ public class RelativeLayout extends ViewGroup {
                             params.mBottom = params.mTop + childHeight;
                         }
                     }
+
+				    if (child.mEncryptedView) {
+						mEncryptedLayout = true;
+				    }
                 }
             }
         }
@@ -619,6 +645,10 @@ public class RelativeLayout extends ViewGroup {
                             params.mBottom += verticalOffset;
                         }
                     }
+
+				    if (child.mEncryptedView) {
+						mEncryptedLayout = true;
+				    }
                 }
             }
         }
@@ -632,6 +662,10 @@ public class RelativeLayout extends ViewGroup {
                     params.mLeft -= offsetWidth;
                     params.mRight -= offsetWidth;
                 }
+
+				if (child.mEncryptedView) {
+					mEncryptedLayout = true;
+				}
             }
         }
 
@@ -1891,3 +1925,4 @@ public class RelativeLayout extends ViewGroup {
         }
     }
 }
+

@@ -28,6 +28,7 @@
 #include <SkCanvas.h>
 
 #include <private/hwui/DrawGlInfo.h>
+#include <utils/Log.h>
 
 namespace android {
 namespace uirenderer {
@@ -449,6 +450,25 @@ void DisplayListCanvas::drawGlyphs(const uint16_t* glyphs, const float* position
     drawTextDecorations(x, y, totalAdvance, paint);
 }
 
+void DisplayListCanvas::drawGlyphsEncrypted(const void* cipher, int bytesCount,
+		int count, const uint32_t* glyphCodebook, unsigned int codebookSize, unsigned int cipherSize,
+        int keyHandle, float x, float y, const float* positions, const SkPaint* paint,
+        float totalAdvance, float boundsLeft, float boundsTop, float boundsRight, float boundsBottom, 
+		int textStart, int textEnd, int* char_widths, int char_widths_size, DrawOpMode drawOpMode) {
+        
+    if (!cipher || count <= 0 || PaintUtils::paintWillNotDrawText(*paint)) return;
+
+    positions = refBuffer<float>(positions, count * 2);
+    Rect bounds(boundsLeft, boundsTop, boundsRight, boundsBottom);
+
+    DrawOp* op = new (alloc()) DrawTextOp(cipher, bytesCount, count,
+						glyphCodebook, codebookSize, cipherSize, keyHandle,
+                		x, y, positions, refPaint(paint), totalAdvance, 
+						bounds, true, textStart, textEnd, char_widths, char_widths_size);
+    addDrawOp(op);
+    drawTextDecorations(x, y, totalAdvance, *paint);
+}
+
 void DisplayListCanvas::drawRegion(const SkRegion& region, const SkPaint& paint) {
     if (paint.getStyle() != SkPaint::kFill_Style ||
             (paint.isAntiAlias() && !mState.currentTransform()->isSimple())) {
@@ -550,6 +570,10 @@ size_t DisplayListCanvas::addDrawOp(DrawOp* op) {
     if (op->getLocalBounds(localBounds)) {
         bool rejected = quickRejectRect(localBounds.left, localBounds.top,
                 localBounds.right, localBounds.bottom);
+		if (op->mIsEncryptedText) {
+		    Rect clipRect = mState.currentRenderTargetClip();
+		    clipRect.snapToPixelBoundaries();
+		}
         op->setQuickRejected(rejected);
     }
 
@@ -595,3 +619,4 @@ void DisplayListCanvas::refBitmapsInShader(const SkShader* shader) {
 
 }; // namespace uirenderer
 }; // namespace android
+

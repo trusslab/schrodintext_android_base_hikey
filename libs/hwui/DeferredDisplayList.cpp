@@ -25,6 +25,7 @@
 #include "OpenGLRenderer.h"
 #include "Properties.h"
 #include "utils/MathUtils.h"
+#include <utils/Log.h>
 
 #if DEBUG_DEFER
     #define DEFER_LOGD(...) ALOGD(__VA_ARGS__)
@@ -484,7 +485,6 @@ void DeferredDisplayList::addDrawOp(OpenGLRenderer& renderer, DrawOp* op) {
     } else {
         state->mBounds.setEmpty();
     }
-
     /* 2: renderer calculates global bounds + stores state */
     if (renderer.storeDisplayState(*state, getDrawOpDeferFlags())) {
         tryRecycleState(state);
@@ -517,7 +517,6 @@ void DeferredDisplayList::addDrawOp(OpenGLRenderer& renderer, DrawOp* op) {
         mBatches.push_back(b);
         return;
     }
-
     // find the latest batch of the new op's type, and try to merge the new op into it
     DrawBatch* targetBatch = nullptr;
 
@@ -600,7 +599,6 @@ void DeferredDisplayList::addDrawOp(OpenGLRenderer& renderer, DrawOp* op) {
                 targetBatch, deferInfo.batchId, insertBatchIndex);
         mBatches.insert(mBatches.begin() + insertBatchIndex, targetBatch);
     }
-
     targetBatch->add(op, state, deferInfo.opaqueOverBounds);
 }
 
@@ -684,3 +682,4 @@ void DeferredDisplayList::discardDrawingBatches(const unsigned int maxIndex) {
 
 }; // namespace uirenderer
 }; // namespace android
+

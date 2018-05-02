@@ -213,6 +213,13 @@ public:
     virtual void drawGlyphs(const uint16_t* glyphs, const float* positions, int count,
             const SkPaint& paint, float x, float y, float boundsLeft, float boundsTop,
             float boundsRight, float boundsBottom, float totalAdvance) override;
+
+    virtual void drawGlyphsEncrypted(const void* cipher, int bytesCount,
+	    int count, const uint32_t* glyphCodebook, unsigned int codebookSize, unsigned int cipherSize,
+	    int keyHandle, float x, float y, const float* positions, const SkPaint* paint,
+	    float totalAdvance, float boundsLeft, float boundsTop, float boundsRight, float boundsBottom,
+            int textStart, int textEnd, int* char_widths, int char_widths_size, DrawOpMode drawOpMode = DrawOpMode::kImmediate) override;
+
     virtual void drawGlyphsOnPath(const uint16_t* glyphs, int count, const SkPath& path,
             float hOffset, float vOffset, const SkPaint& paint) override;
     virtual bool drawTextAbsolutePos() const override { return false; }
@@ -357,3 +364,4 @@ private:
 }; // namespace android
 
 #endif // ANDROID_HWUI_DISPLAY_LIST_RENDERER_H
+

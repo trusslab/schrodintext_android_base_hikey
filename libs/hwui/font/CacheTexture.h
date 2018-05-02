@@ -180,6 +180,8 @@ public:
 
     uint32_t calculateFreeMemory() const;
 
+    bool mEncryptedTexture;
+
 private:
     void setDirty(bool dirty);
 

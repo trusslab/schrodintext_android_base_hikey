@@ -119,6 +119,12 @@ public:
             int numGlyphs, const SkPath* path,
             float hOffset, float vOffset, Rect* outBounds, TextDrawFunctor* functor);
 
+    bool renderPosEncryptedText(const SkPaint* paint, const Rect* clip,
+	    const void *cipher, uint32_t startIndex, uint32_t len, int numGlyphs,
+	    const uint32_t *glyphCodebook, unsigned int codebookSize, unsigned int cipherSize,
+	    int keyHandle,int x, int y, const float* positions, Rect* bounds, TextDrawFunctor* functor, 
+		int textStart, int textEnd, int* charWidths, int charWidthsSize, bool forceFinish = true);
+
     struct DropShadow {
         uint32_t width;
         uint32_t height;
@@ -139,6 +145,9 @@ public:
     uint32_t getSize() const;
     void dumpMemoryUsage(String8& log) const;
 
+    void commitHiddenContent(void *fb, uint32_t fb_width, uint32_t fb_bytespp);
+    static void removeHiddenContent();
+
 #ifdef BUGREPORT_FONT_CACHE_USAGE
     FontCacheHistoryTracker& historyTracker() { return mHistoryTracker; }
 #endif
@@ -154,6 +163,9 @@ private:
     CacheTexture* createCacheTexture(int width, int height, GLenum format, bool allocate);
     void cacheBitmap(const SkGlyph& glyph, CachedGlyphInfo* cachedGlyph,
             uint32_t *retOriginX, uint32_t *retOriginY, bool precaching);
+    void cacheBitmapEncrypted(const SkGlyph& glyph, CachedGlyphInfo* cachedGlyph,
+            uint32_t *retOriginX, uint32_t *retOriginY, bool precaching, SkAutoGlyphCache *autoCache,
+	    int color, int textStart, int textEnd, int* charWidths, int charWidthsSize);
     CacheTexture* cacheBitmapInTexture(std::vector<CacheTexture*>& cacheTextures, const SkGlyph& glyph,
             uint32_t* startX, uint32_t* startY);
 
@@ -164,8 +176,14 @@ private:
     void finishRender();
 
     void issueDrawCommand(std::vector<CacheTexture*>& cacheTextures);
+    void issueDrawCommandEncrypted(std::vector<CacheTexture*>& cacheTextures);
     void issueDrawCommand();
+    void issueDrawCommandEncrypted();
     void appendMeshQuadNoClip(float x1, float y1, float u1, float v1,
+            float x2, float y2, float u2, float v2,
+            float x3, float y3, float u3, float v3,
+            float x4, float y4, float u4, float v4, CacheTexture* texture);
+    void appendMeshQuadNoClipEncrypted(float x1, float y1, float u1, float v1,
             float x2, float y2, float u2, float v2,
             float x3, float y3, float u3, float v3,
             float x4, float y4, float u4, float v4, CacheTexture* texture);
@@ -173,6 +191,11 @@ private:
             float x2, float y2, float u2, float v2,
             float x3, float y3, float u3, float v3,
             float x4, float y4, float u4, float v4, CacheTexture* texture);
+    void appendMeshQuadEncrypted(float x1, float y1, float u1, float v1,
+            float x2, float y2, float u2, float v2,
+            float x3, float y3, float u3, float v3,
+            //float x4, float y4, float u4, float v4, CacheTexture* texture);
+            float x4, float y4, float u4, float v4, CachedGlyphInfo* glyph);
     void appendRotatedMeshQuad(float x1, float y1, float u1, float v1,
             float x2, float y2, float u2, float v2,
             float x3, float y3, float u3, float v3,
@@ -202,6 +225,7 @@ private:
     CacheTexture* mCurrentCacheTexture;
 
     bool mUploadTexture;
+    bool mEncryptedTexture;
 
     TextDrawFunctor* mFunctor;
     const Rect* mClip;
@@ -237,3 +261,4 @@ private:
 }; // namespace android
 
 #endif // ANDROID_HWUI_FONT_RENDERER_H
+

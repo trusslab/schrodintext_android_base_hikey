@@ -40,6 +40,9 @@ public:
     ANDROID_API static void doLayout(Layout* layout, const Paint* paint, int bidiFlags,
             Typeface* typeface, const uint16_t* buf, size_t start, size_t count,
             size_t bufSize);
+            
+    ANDROID_API static void doEncryptedLayout(Layout* layout, const Paint* paint, int bidiFlags, Typeface* typeface,
+            const void* buf, size_t start, size_t count, size_t bufSize);
 
     ANDROID_API static float measureText(const Paint* paint, int bidiFlags, Typeface* typeface,
             const uint16_t* buf, size_t start, size_t count, size_t bufSize, float *advances);
@@ -80,3 +83,4 @@ public:
 }  // namespace android
 
 #endif  // _ANDROID_GRAPHICS_MINIKIN_UTILS_H_
+

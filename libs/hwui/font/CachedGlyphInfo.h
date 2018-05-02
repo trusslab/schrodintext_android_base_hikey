@@ -50,9 +50,18 @@ struct CachedGlyphInfo {
     SkFixed mLsbDelta;
     SkFixed mRsbDelta;
     CacheTexture* mCacheTexture;
+    bool mEncryptedMode;
+    const void *mCipher;
+    unsigned int mEncryptedNumGlyphs;
+    unsigned int mEncryptedTextPos;
+    const uint32_t *mGlyphCodebook;
+    unsigned int mCodebookSize;
+    unsigned int mCipherSize;
+    int mKeyHandle;
 };
 
 }; // namespace uirenderer
 }; // namespace android
 
 #endif // ANDROID_HWUI_CACHED_GLYPH_INFO_H
+

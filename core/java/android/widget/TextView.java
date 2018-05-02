@@ -156,6 +156,7 @@ import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.io.*;
 
 /**
  * Displays text to the user and optionally allows them to edit it.  A TextView
@@ -557,6 +558,11 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
 
     @ViewDebug.ExportedProperty(category = "text")
     private CharSequence mText;
+    private boolean mEncryptedMode;
+    private int mEncryptedTextLength;
+    private byte[] mCipher;
+	private String mEncryptedLayoutMode;
+    private int mKeyHandle;
     private CharSequence mTransformed;
     private BufferType mBufferType = BufferType.NORMAL;
 
@@ -710,6 +716,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         super(context, attrs, defStyleAttr, defStyleRes);
 
         mText = "";
+		mEncryptedMode = false;
 
         final Resources res = getResources();
         final CompatibilityInfo compat = res.getCompatibilityInfo();
@@ -4348,147 +4355,160 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         }
 
         // If suggestions are not enabled, remove the suggestion spans from the text
-        if (!isSuggestionsEnabled()) {
+		// We do not support suggestions spans in encrypted mode
+        if (!isSuggestionsEnabled() && !mEncryptedMode) {
             text = removeSuggestionSpans(text);
         }
 
         if (!mUserSetTextScaleX) mTextPaint.setTextScaleX(1.0f);
 
-        if (text instanceof Spanned &&
-            ((Spanned) text).getSpanStart(TextUtils.TruncateAt.MARQUEE) >= 0) {
-            if (ViewConfiguration.get(mContext).isFadingMarqueeEnabled()) {
-                setHorizontalFadingEdgeEnabled(true);
-                mMarqueeFadeMode = MARQUEE_FADE_NORMAL;
-            } else {
-                setHorizontalFadingEdgeEnabled(false);
-                mMarqueeFadeMode = MARQUEE_FADE_SWITCH_SHOW_ELLIPSIS;
-            }
-            setEllipsize(TextUtils.TruncateAt.MARQUEE);
-        }
-
-        int n = mFilters.length;
-        for (int i = 0; i < n; i++) {
-            CharSequence out = mFilters[i].filter(text, 0, text.length(), EMPTY_SPANNED, 0, 0);
-            if (out != null) {
-                text = out;
-            }
-        }
-
-        if (notifyBefore) {
-            if (mText != null) {
-                oldlen = mText.length();
-                sendBeforeTextChanged(mText, 0, oldlen, text.length());
-            } else {
-                sendBeforeTextChanged("", 0, 0, text.length());
-            }
-        }
-
+		// We do not support suggestions spans in encrypted mode
+		if (!mEncryptedMode) {
+		    if (text instanceof Spanned &&
+		        ((Spanned) text).getSpanStart(TextUtils.TruncateAt.MARQUEE) >= 0) {
+		        if (ViewConfiguration.get(mContext).isFadingMarqueeEnabled()) {
+		            setHorizontalFadingEdgeEnabled(true);
+		            mMarqueeFadeMode = MARQUEE_FADE_NORMAL;
+		        } else {
+		            setHorizontalFadingEdgeEnabled(false);
+		            mMarqueeFadeMode = MARQUEE_FADE_SWITCH_SHOW_ELLIPSIS;
+		        }
+		        setEllipsize(TextUtils.TruncateAt.MARQUEE);
+        	}
+		}
+	
         boolean needEditableForNotification = false;
 
-        if (mListeners != null && mListeners.size() != 0) {
-            needEditableForNotification = true;
-        }
+		// We do not support editable text in encrypted mode
+		if (!mEncryptedMode) {
+		    int n = mFilters.length;
+		    for (int i = 0; i < n; i++) {
+		        CharSequence out = mFilters[i].filter(text, 0, text.length(), EMPTY_SPANNED, 0, 0);
+		        if (out != null) {
+		            text = out;
+		        }
+		    }
 
-        if (type == BufferType.EDITABLE || getKeyListener() != null ||
-                needEditableForNotification) {
-            createEditorIfNeeded();
-            mEditor.forgetUndoRedo();
-            Editable t = mEditableFactory.newEditable(text);
-            text = t;
-            setFilters(t, mFilters);
-            InputMethodManager imm = InputMethodManager.peekInstance();
-            if (imm != null) imm.restartInput(this);
-        } else if (type == BufferType.SPANNABLE || mMovement != null) {
-            text = mSpannableFactory.newSpannable(text);
-        } else if (!(text instanceof CharWrapper)) {
-            text = TextUtils.stringOrSpannedString(text);
-        }
+		    if (notifyBefore) {
+		        if (mText != null) {
+		            oldlen = mText.length();
+		            sendBeforeTextChanged(mText, 0, oldlen, text.length());
+		        } else {
+		            sendBeforeTextChanged("", 0, 0, text.length());
+		        }
+		    }
 
-        if (mAutoLinkMask != 0) {
-            Spannable s2;
 
-            if (type == BufferType.EDITABLE || text instanceof Spannable) {
-                s2 = (Spannable) text;
-            } else {
-                s2 = mSpannableFactory.newSpannable(text);
-            }
+		    if (mListeners != null && mListeners.size() != 0) {
+		        needEditableForNotification = true;
+		    }
 
-            if (Linkify.addLinks(s2, mAutoLinkMask)) {
-                text = s2;
-                type = (type == BufferType.EDITABLE) ? BufferType.EDITABLE : BufferType.SPANNABLE;
+		    if (type == BufferType.EDITABLE || getKeyListener() != null ||
+		            needEditableForNotification) {
+		        createEditorIfNeeded();
+		        mEditor.forgetUndoRedo();
+		        Editable t = mEditableFactory.newEditable(text);
+		        text = t;
+		        setFilters(t, mFilters);
+		        InputMethodManager imm = InputMethodManager.peekInstance();
+		        if (imm != null) imm.restartInput(this);
+		    } else if (type == BufferType.SPANNABLE || mMovement != null) {
+		        text = mSpannableFactory.newSpannable(text);
+		    } else if (!(text instanceof CharWrapper)) {
+		        text = TextUtils.stringOrSpannedString(text);
+		    }
 
-                /*
-                 * We must go ahead and set the text before changing the
-                 * movement method, because setMovementMethod() may call
-                 * setText() again to try to upgrade the buffer type.
-                 */
-                mText = text;
+		    if (mAutoLinkMask != 0) {
+		        Spannable s2;
 
-                // Do not change the movement method for text that support text selection as it
-                // would prevent an arbitrary cursor displacement.
-                if (mLinksClickable && !textCanBeSelected()) {
-                    setMovementMethod(LinkMovementMethod.getInstance());
-                }
-            }
-        }
+		        if (type == BufferType.EDITABLE || text instanceof Spannable) {
+		            s2 = (Spannable) text;
+		        } else {
+		            s2 = mSpannableFactory.newSpannable(text);
+		        }
+
+		        if (Linkify.addLinks(s2, mAutoLinkMask)) {
+		            text = s2;
+		            type = (type == BufferType.EDITABLE) ? BufferType.EDITABLE : BufferType.SPANNABLE;
+
+		            /*
+		             * We must go ahead and set the text before changing the
+		             * movement method, because setMovementMethod() may call
+		             * setText() again to try to upgrade the buffer type.
+		             */
+		            mText = text;
+
+		            // Do not change the movement method for text that support text selection as it
+		            // would prevent an arbitrary cursor displacement.
+		            if (mLinksClickable && !textCanBeSelected()) {
+		                setMovementMethod(LinkMovementMethod.getInstance());
+		            }
+		        }
+		    }
+		}
 
         mBufferType = type;
         mText = text;
 
-        if (mTransformation == null) {
+		// We do not support editable/spannable text in encrypted mode
+        if (!mEncryptedMode) {
+		    if (mTransformation == null) {
+		        mTransformed = text;
+		    } else {
+		        mTransformed = mTransformation.getTransformation(text, this);
+		    }
+
+		    final int textLength = text.length();
+
+		    if (text instanceof Spannable && !mAllowTransformationLengthChange) {
+		        Spannable sp = (Spannable) text;
+
+		        // Remove any ChangeWatchers that might have come from other TextViews.
+		        final ChangeWatcher[] watchers = sp.getSpans(0, sp.length(), ChangeWatcher.class);
+		        final int count = watchers.length;
+		        for (int i = 0; i < count; i++) {
+		            sp.removeSpan(watchers[i]);
+		        }
+
+		        if (mChangeWatcher == null) mChangeWatcher = new ChangeWatcher();
+
+		        sp.setSpan(mChangeWatcher, 0, textLength, Spanned.SPAN_INCLUSIVE_INCLUSIVE |
+		                   (CHANGE_WATCHER_PRIORITY << Spanned.SPAN_PRIORITY_SHIFT));
+
+		        if (mEditor != null) mEditor.addSpanWatchers(sp);
+
+		        if (mTransformation != null) {
+		            sp.setSpan(mTransformation, 0, textLength, Spanned.SPAN_INCLUSIVE_INCLUSIVE);
+		        }
+
+		        if (mMovement != null) {
+		            mMovement.initialize(this, (Spannable) text);
+
+		            /*
+		             * Initializing the movement method will have set the
+		             * selection, so reset mSelectionMoved to keep that from
+		             * interfering with the normal on-focus selection-setting.
+		             */
+		            if (mEditor != null) mEditor.mSelectionMoved = false;
+		        }
+		    }
+
+		    if (mLayout != null) {
+		        checkForRelayout();
+		    }
+
+		    sendOnTextChanged(text, 0, oldlen, textLength);
+		    onTextChanged(text, 0, oldlen, textLength);
+
+		    notifyViewAccessibilityStateChangedIfNeeded(AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT);
+
+		    if (needEditableForNotification) {
+		        sendAfterTextChanged((Editable) text);
+		    }
+		} else {
             mTransformed = text;
-        } else {
-            mTransformed = mTransformation.getTransformation(text, this);
-        }
-
-        final int textLength = text.length();
-
-        if (text instanceof Spannable && !mAllowTransformationLengthChange) {
-            Spannable sp = (Spannable) text;
-
-            // Remove any ChangeWatchers that might have come from other TextViews.
-            final ChangeWatcher[] watchers = sp.getSpans(0, sp.length(), ChangeWatcher.class);
-            final int count = watchers.length;
-            for (int i = 0; i < count; i++) {
-                sp.removeSpan(watchers[i]);
-            }
-
-            if (mChangeWatcher == null) mChangeWatcher = new ChangeWatcher();
-
-            sp.setSpan(mChangeWatcher, 0, textLength, Spanned.SPAN_INCLUSIVE_INCLUSIVE |
-                       (CHANGE_WATCHER_PRIORITY << Spanned.SPAN_PRIORITY_SHIFT));
-
-            if (mEditor != null) mEditor.addSpanWatchers(sp);
-
-            if (mTransformation != null) {
-                sp.setSpan(mTransformation, 0, textLength, Spanned.SPAN_INCLUSIVE_INCLUSIVE);
-            }
-
-            if (mMovement != null) {
-                mMovement.initialize(this, (Spannable) text);
-
-                /*
-                 * Initializing the movement method will have set the
-                 * selection, so reset mSelectionMoved to keep that from
-                 * interfering with the normal on-focus selection-setting.
-                 */
-                if (mEditor != null) mEditor.mSelectionMoved = false;
-            }
-        }
-
-        if (mLayout != null) {
-            checkForRelayout();
-        }
-
-        sendOnTextChanged(text, 0, oldlen, textLength);
-        onTextChanged(text, 0, oldlen, textLength);
-
-        notifyViewAccessibilityStateChangedIfNeeded(AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT);
-
-        if (needEditableForNotification) {
-            sendAfterTextChanged((Editable) text);
-        }
-
+		}
+	
         // SelectionModifierCursorController depends on textCanBeSelected, which depends on text
         if (mEditor != null) mEditor.prepareCursorControllers();
     }
@@ -4520,7 +4540,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         }
 
         if (mCharWrapper == null) {
-            mCharWrapper = new CharWrapper(text, start, len);
+            mCharWrapper = new CharWrapper(text, start, len, mEncryptedMode);
         } else {
             mCharWrapper.set(text, start, len);
         }
@@ -5787,8 +5807,9 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         }
 
         Layout layout = mLayout;
+		int _length = (mEncryptedMode) ? mEncryptedTextLength : mText.length();
 
-        if (mHint != null && mText.length() == 0) {
+        if (mHint != null && _length == 0) {
             if (mHintTextColor != null) {
                 color = mCurHintTextColor;
             }
@@ -6094,30 +6115,31 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         }
 
         repeatCount--;
+		if (!mEncryptedMode) {
+		    // We are going to dispatch the remaining events to either the input
+		    // or movement method.  To do this, we will just send a repeated stream
+		    // of down and up events until we have done the complete repeatCount.
+		    // It would be nice if those interfaces had an onKeyMultiple() method,
+		    // but adding that is a more complicated change.
+		    KeyEvent up = KeyEvent.changeAction(event, KeyEvent.ACTION_UP);
+		    if (which == KEY_DOWN_HANDLED_BY_KEY_LISTENER) {
+		        // mEditor and mEditor.mInput are not null from doKeyDown
+		        mEditor.mKeyListener.onKeyUp(this, (Editable)mText, keyCode, up);
+		        while (--repeatCount > 0) {
+		            mEditor.mKeyListener.onKeyDown(this, (Editable)mText, keyCode, down);
+		            mEditor.mKeyListener.onKeyUp(this, (Editable)mText, keyCode, up);
+		        }
+		        hideErrorIfUnchanged();
 
-        // We are going to dispatch the remaining events to either the input
-        // or movement method.  To do this, we will just send a repeated stream
-        // of down and up events until we have done the complete repeatCount.
-        // It would be nice if those interfaces had an onKeyMultiple() method,
-        // but adding that is a more complicated change.
-        KeyEvent up = KeyEvent.changeAction(event, KeyEvent.ACTION_UP);
-        if (which == KEY_DOWN_HANDLED_BY_KEY_LISTENER) {
-            // mEditor and mEditor.mInput are not null from doKeyDown
-            mEditor.mKeyListener.onKeyUp(this, (Editable)mText, keyCode, up);
-            while (--repeatCount > 0) {
-                mEditor.mKeyListener.onKeyDown(this, (Editable)mText, keyCode, down);
-                mEditor.mKeyListener.onKeyUp(this, (Editable)mText, keyCode, up);
-            }
-            hideErrorIfUnchanged();
-
-        } else if (which == KEY_DOWN_HANDLED_BY_MOVEMENT_METHOD) {
-            // mMovement is not null from doKeyDown
-            mMovement.onKeyUp(this, (Spannable)mText, keyCode, up);
-            while (--repeatCount > 0) {
-                mMovement.onKeyDown(this, (Spannable)mText, keyCode, down);
-                mMovement.onKeyUp(this, (Spannable)mText, keyCode, up);
-            }
-        }
+		    } else if (which == KEY_DOWN_HANDLED_BY_MOVEMENT_METHOD) {
+		        // mMovement is not null from doKeyDown
+		        mMovement.onKeyUp(this, (Spannable)mText, keyCode, up);
+		        while (--repeatCount > 0) {
+		            mMovement.onKeyDown(this, (Spannable)mText, keyCode, down);
+		            mMovement.onKeyUp(this, (Spannable)mText, keyCode, up);
+		        }
+		    }
+		}
 
         return true;
     }
@@ -6816,8 +6838,13 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             if (shouldEllipsize) hintWidth = wantWidth;
 
             if (hintBoring == UNKNOWN_BORING) {
-                hintBoring = BoringLayout.isBoring(mHint, mTextPaint, mTextDir,
-                                                   mHintBoring);
+				if (mEncryptedMode) {
+				        hintBoring = BoringLayout.isEncryptedBoring(mHint, mTextPaint, mTextDir,
+				                                            mHintBoring, mEncryptedTextLength, String.valueOf(this.getTypeface()), mEncryptedLayoutMode);
+				} else {
+                	hintBoring = BoringLayout.isBoring(mHint, mTextPaint, mTextDir,
+                    	                               mHintBoring);
+				}
                 if (hintBoring != null) {
                     mHintBoring = hintBoring;
                 }
@@ -6901,30 +6928,37 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             Layout.Alignment alignment, boolean shouldEllipsize, TruncateAt effectiveEllipsize,
             boolean useSaved) {
         Layout result = null;
-        if (mText instanceof Spannable) {
+        if (!mEncryptedMode && mText instanceof Spannable) {
             result = new DynamicLayout(mText, mTransformed, mTextPaint, wantWidth,
                     alignment, mTextDir, mSpacingMult, mSpacingAdd, mIncludePad,
                     mBreakStrategy, mHyphenationFrequency,
                     getKeyListener() == null ? effectiveEllipsize : null, ellipsisWidth);
         } else {
             if (boring == UNKNOWN_BORING) {
-                boring = BoringLayout.isBoring(mTransformed, mTextPaint, mTextDir, mBoring);
+				if (mEncryptedMode) {
+					boring = BoringLayout.isEncryptedBoring(mTransformed, mTextPaint, mTextDir,
+															mBoring, mEncryptedTextLength, String.valueOf(this.getTypeface()), mEncryptedLayoutMode);
+				} else {
+                	boring = BoringLayout.isBoring(mTransformed, mTextPaint, mTextDir, mBoring);
+				}
                 if (boring != null) {
                     mBoring = boring;
                 }
             }
 
             if (boring != null) {
-                if (boring.width <= wantWidth &&
-                        (effectiveEllipsize == null || boring.width <= ellipsisWidth)) {
+                if (mEncryptedMode || (boring.width <= wantWidth &&
+                        (effectiveEllipsize == null || boring.width <= ellipsisWidth))) {
                     if (useSaved && mSavedLayout != null) {
                         result = mSavedLayout.replaceOrMake(mTransformed, mTextPaint,
                                 wantWidth, alignment, mSpacingMult, mSpacingAdd,
-                                boring, mIncludePad);
+                                boring, mIncludePad, mEncryptedMode, mEncryptedTextLength,
+								mCipher, mKeyHandle);
                     } else {
                         result = BoringLayout.make(mTransformed, mTextPaint,
                                 wantWidth, alignment, mSpacingMult, mSpacingAdd,
-                                boring, mIncludePad);
+                                boring, mIncludePad, mEncryptedMode, mEncryptedTextLength,
+								mCipher, mKeyHandle);
                     }
 
                     if (useSaved) {
@@ -7071,7 +7105,12 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
             }
 
             if (des < 0) {
-                boring = BoringLayout.isBoring(mTransformed, mTextPaint, mTextDir, mBoring);
+				if (mEncryptedMode) {
+					boring = BoringLayout.isEncryptedBoring(mTransformed, mTextPaint, mTextDir,
+									mBoring, mEncryptedTextLength, String.valueOf(this.getTypeface()), mEncryptedLayoutMode);
+				} else {
+                	boring = BoringLayout.isBoring(mTransformed, mTextPaint, mTextDir, mBoring);
+				}
                 if (boring != null) {
                     mBoring = boring;
                 }
@@ -7103,7 +7142,12 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
                 }
 
                 if (hintDes < 0) {
-                    hintBoring = BoringLayout.isBoring(mHint, mTextPaint, mTextDir, mHintBoring);
+					if (mEncryptedMode) {
+				            hintBoring = BoringLayout.isEncryptedBoring(mHint, mTextPaint, mTextDir,
+											mHintBoring, mEncryptedTextLength, String.valueOf(this.getTypeface()), mEncryptedLayoutMode);
+					} else {
+                    	hintBoring = BoringLayout.isBoring(mHint, mTextPaint, mTextDir, mHintBoring);
+					}
                     if (hintBoring != null) {
                         mHintBoring = hintBoring;
                     }
@@ -7153,7 +7197,8 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         int hintWant = want;
         int hintWidth = (mHintLayout == null) ? hintWant : mHintLayout.getWidth();
 
-        if (mLayout == null) {
+		// In encryptedMode, we just redo the layout everytime.
+        if (mLayout == null || mEncryptedMode) {
             makeNewLayout(want, hintWant, boring, hintBoring,
                           width - getCompoundPaddingLeft() - getCompoundPaddingRight(), false);
         } else {
@@ -7320,7 +7365,6 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     private void checkForRelayout() {
         // If we have a fixed width, we can just swap in a new text layout
         // if the text height stays the same or if the view height is fixed.
-
         if ((mLayoutParams.width != LayoutParams.WRAP_CONTENT ||
                 (mMaxWidthMode == mMinWidthMode && mMaxWidth == mMinWidth)) &&
                 (mHint == null || mHintLayout != null) &&
@@ -7376,7 +7420,10 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         if (mDeferScroll >= 0) {
             int curs = mDeferScroll;
             mDeferScroll = -1;
-            bringPointIntoView(Math.min(curs, mText.length()));
+			if (mEncryptedMode)
+		    	bringPointIntoView(Math.min(curs, mEncryptedTextLength));
+			else
+            	bringPointIntoView(Math.min(curs, mText.length()));
         }
     }
 
@@ -10031,6 +10078,47 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         stream.addProperty("text:text", mText == null ? null : mText.toString());
         stream.addProperty("text:gravity", mGravity);
     }
+    
+    /** @hide */
+    public boolean getEncryptedMode () {
+        return mEncryptedMode;
+    }
+    /** @hide */
+    public void setEncryptedMode(boolean encryptedMode) {
+        mEncryptedMode = encryptedMode;
+    }
+    /** @hide */
+    public int getEncryptedTextLength () {
+        return mEncryptedTextLength;
+    }
+    /** @hide */
+    public void setEncryptedTextLength(int encryptedTextLength) {
+        mEncryptedTextLength = encryptedTextLength;
+    }
+	/** @hide */
+	public void setEncryptedLayoutMode(String textMode) {
+		mEncryptedLayoutMode = textMode;
+	}
+    /** @hide */
+    public byte[] getCipher () {
+        return mCipher;
+    }
+    /** @hide */
+    public void setCipher(byte[] cipher) {
+        mCipher = cipher;
+    }
+    /** @hide */
+    public int getKeyHandle () {
+        return mKeyHandle;
+    }
+    /** @hide */
+    public void setKeyHandle(int keyHandle) {
+        mKeyHandle = keyHandle;
+    }
+    /** @hide */
+    public void clearEncryptedText() {
+    	BoringLayout.clearEncryptedText();
+    }
 
     /**
      * User interface state that is stored by TextView for implementing
@@ -10114,11 +10202,13 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
     private static class CharWrapper implements CharSequence, GetChars, GraphicsOperations {
         private char[] mChars;
         private int mStart, mLength;
+		private boolean mEncryptedMode;
 
-        public CharWrapper(char[] chars, int start, int len) {
+        public CharWrapper(char[] chars, int start, int len, boolean encryptedMode) {
             mChars = chars;
             mStart = start;
             mLength = len;
+			mEncryptedMode = encryptedMode;
         }
 
         /* package */ void set(char[] chars, int start, int len) {
@@ -10405,3 +10495,4 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
         }
     }
 }
+
